@@ -113,9 +113,9 @@ while true; do
                 echo -e "${CYAN}[*] Generating MD5 Hashes for Security...${RESET}"
                 sudo find "$PROJECT_DIR" -type f -name "*.php" -exec md5sum {} + | sudo tee "$FOOTPRINT_FILE" > /dev/null
                 
-                echo -e "${CYAN}[*] Exporting Database Structure...${RESET}"
-                # Dump structure without DEFINER to make comparison easier
-                sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-data --skip-comments --skip-dump-date "$DB_NAME" | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "$BACKUP_DIR/db_structure.sql" 2>/dev/null
+                echo -e "${CYAN}[*] Exporting Database Structure (Bypassing Process Privileges)...${RESET}"
+                # 💥 FIX: Added --no-tablespaces and redirected stderr to /dev/null to hide warnings
+                sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-tablespaces --no-data --skip-comments --skip-dump-date "$DB_NAME" 2>/dev/null | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "$BACKUP_DIR/db_structure.sql"
                 
                 CURRENT_DATE=$(date +"%d %B %Y, %I:%M:%S %p")
                 echo "Project Name: $SELECTED_PROJ" > "$INFO_FILE"
@@ -146,8 +146,8 @@ while true; do
                     if [ -f "$BACKUP_DIR/db_structure.sql" ]; then
                         echo -e "\n${CYAN}[*] Verifying Database Structure...${RESET}"
                         
-                        # Get current live structure
-                        sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-data --skip-comments --skip-dump-date "$DB_NAME" | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "/tmp/live_db_structure.sql" 2>/dev/null
+                        # 💥 FIX: Added --no-tablespaces here too
+                        sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-tablespaces --no-data --skip-comments --skip-dump-date "$DB_NAME" 2>/dev/null | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "/tmp/live_db_structure.sql"
                         
                         # Compare Baseline with Live
                         DB_DIFF=$(diff -q "$BACKUP_DIR/db_structure.sql" "/tmp/live_db_structure.sql")
@@ -158,13 +158,9 @@ while true; do
                              echo -e "${RED}[!] WARNING: DATABASE STRUCTURE HAS CHANGED!${RESET}"
                              echo -e "${YELLOW}Someone/Something added or removed tables/columns.${RESET}"
                              
-                             # Suggest viewing the diff
                              read -p "Do you want to see what changed in the DB? (y/n): " SHOW_DB_DIFF
                              if [[ "$SHOW_DB_DIFF" == "y" || "$SHOW_DB_DIFF" == "Y" ]]; then
                                  echo -e "\n${CYAN}--- DATABASE DIFFERENCES ---${RESET}"
-                                 # Use diff to show lines that changed.
-                                 # Lines starting with '<' were in the original (deleted now)
-                                 # Lines starting with '>' are new in the live DB (added now)
                                  diff "$BACKUP_DIR/db_structure.sql" "/tmp/live_db_structure.sql" | grep -E "^> CREATE TABLE|^< CREATE TABLE|^>   \`|^<   \`"
                                  echo -e "${CYAN}----------------------------${RESET}"
                                  echo -e "${YELLOW}Legend: '>' means added newly. '<' means it was removed.${RESET}"
