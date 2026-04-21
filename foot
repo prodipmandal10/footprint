@@ -17,14 +17,67 @@ CYAN="\e[36m"
 MAGENTA="\e[35m"
 RESET="\e[0m"
 
-# ⚙️ কনফিগারেশন (আপনার প্রজেক্টের পাথ এবং ডাটাবেস)
-PROJECT_DIR="/var/www/html/codexaum"
-BACKUP_DIR="/var/www/html/codexaum_baseline_safe"
-FOOTPRINT_FILE="/var/www/html/codexaum_footprint.md5"
+BASE_DIR="/var/www/html"
 
-DB_NAME="codexaum_erp"
+# ⚙️ কনফিগারেশন (আপনার প্রজেক্টের পাথ এবং ডাটাবেস)
+DB_NAME="codexaum_erp" # Change this if needed
 DB_USER="ssk"
 DB_PASS='babajalpesh$$1' # Single quote used to prevent bash evaluation of $$
+
+
+# =================================================================
+# 🔍 SHARED HELPER: AUTO-DETECT PROJECTS & SELECT BY SL NO
+# =================================================================
+select_project() {
+    echo -e "\n${YELLOW}[*] SCANNING VPS FOR RUNNING PROJECTS...${RESET}"
+    cd "$BASE_DIR" || return 1
+    
+    shopt -s nullglob
+    local ALL_DIRS=(*/)
+    shopt -u nullglob
+
+    PROJ_LIST=()
+    for d in "${ALL_DIRS[@]}"; do
+        d=${d%/} 
+        if [[ "$d" != *"_baseline_safe"* && "$d" != "phpmyadmin" ]]; then
+            PROJ_LIST+=("$d")
+        fi
+    done
+
+    if [ ${#PROJ_LIST[@]} -eq 0 ]; then
+        echo -e "${RED}[-] No active projects found in $BASE_DIR!${RESET}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Available Projects on this VPS:${RESET}"
+    echo -e "${BLUE}-----------------------------------------------------${RESET}"
+    for i in "${!PROJ_LIST[@]}"; do
+        echo -e "${GREEN}  $((i+1))) 📁 ${PROJ_LIST[$i]}${RESET}"
+    done
+    echo -e "${BLUE}-----------------------------------------------------${RESET}"
+    echo -e "${RED}  0) 🔙 Cancel & Go Back${RESET}"
+
+    read -p "Select a Project SL No [0-${#PROJ_LIST[@]}]: " P_CHOICE
+    P_CHOICE=$(echo "$P_CHOICE" | tr -cd '0-9')
+
+    if [[ -z "$P_CHOICE" || "$P_CHOICE" == "0" ]]; then
+        return 1
+    elif [[ "$P_CHOICE" -gt 0 && "$P_CHOICE" -le "${#PROJ_LIST[@]}" ]]; then
+        SELECTED_PROJ="${PROJ_LIST[$((P_CHOICE-1))]}"
+        
+        PROJECT_DIR="$BASE_DIR/$SELECTED_PROJ"
+        BACKUP_DIR="$BASE_DIR/${SELECTED_PROJ}_baseline_safe"
+        FOOTPRINT_FILE="$BASE_DIR/${SELECTED_PROJ}_footprint.md5"
+        INFO_FILE="$BASE_DIR/${SELECTED_PROJ}_backup_info.txt"
+        
+        echo -e "${GREEN}[+] Selected Project: ${CYAN}$SELECTED_PROJ${RESET}"
+        return 0
+    else
+        echo -e "${RED}[-] Invalid Selection!${RESET}"
+        return 1
+    fi
+}
+
 
 # ═══════════════════════════════════════════════════════
 #                      MAIN LOOP
@@ -34,93 +87,154 @@ while true; do
     echo -e "${YELLOW}=====================================================${RESET}"
     echo -e "${MAGENTA}             🛡️ MADE BY PRODIP 🛡️              ${RESET}"
     echo -e "${YELLOW}=====================================================${RESET}"
-    echo -e "${GREEN}    🌟 SELF-HEALING & SECURITY MONITOR (PRO) 🌟    ${RESET}"
+    echo -e "${GREEN}    🌟 VPS MULTI-PROJECT SELF-HEALING PRO 🌟       ${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
-    echo -e "${CYAN}1) 📸 TAKE FOOTPRINT (Save Good State & Backup)${RESET}"
-    echo -e "${YELLOW}2) 🕵️‍♂️ SCAN FOR CHANGES (Check Hacks or Errors)${RESET}"
-    echo -e "${RED}3) 🚑 AUTO-RESTORE (1-Click Rollback to Safe State)${RESET}"
+    echo -e "${CYAN}1) 📸 TAKE FOOTPRINT (Select Project & Backup)${RESET}"
+    echo -e "${YELLOW}2) 🕵️‍♂️ SCAN FOR CHANGES (Check Errors/Hacks)${RESET}"
+    echo -e "${RED}3) 🚑 AUTO-RESTORE (1-Click Rollback)${RESET}"
+    echo -e "${MAGENTA}4) ℹ️ VIEW FOOTPRINT INFO (Date, Time & Status)${RESET}"
     echo -e "${BLUE}-----------------------------------------------------${RESET}"
     echo -e "${RED}0) ❌ EXIT${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
 
-    read -p "Select an option [0-3]: " raw_choice
+    read -p "Select an option [0-4]: " raw_choice
     choice=$(echo "$raw_choice" | tr -cd '0-9')
     if [ -z "$choice" ]; then choice="99"; fi
 
     case $choice in
         1)
-            echo -e "\n${YELLOW}[*] CREATING BASELINE FOOTPRINT & BACKUP...${RESET}"
-            
-            # ১. ফাইল ব্যাকআপ নেওয়া
-            echo -e "${CYAN}[*] Cloning current healthy files to Secret Vault...${RESET}"
-            sudo rm -rf "$BACKUP_DIR"
-            sudo cp -r "$PROJECT_DIR" "$BACKUP_DIR"
-            
-            # ২. MD5 ফুটপ্রিন্ট নেওয়া
-            echo -e "${CYAN}[*] Generating MD5 Hashes for Security...${RESET}"
-            sudo find "$PROJECT_DIR" -type f -name "*.php" -exec md5sum {} + | sudo tee "$FOOTPRINT_FILE" > /dev/null
-            
-            # ৩. ডাটাবেস স্ট্রাকচার ব্যাকআপ (শুধু ছক, ডেটা নয়)
-            echo -e "${CYAN}[*] Exporting Database Structure...${RESET}"
-            sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-data "$DB_NAME" > "$BACKUP_DIR/db_structure.sql" 2>/dev/null
-            
-            echo -e "${GREEN}[+] FOOTPRINT SAVED! Server is now monitored.${RESET}"
+            if select_project; then
+                echo -e "\n${YELLOW}[*] CREATING BASELINE FOOTPRINT FOR '$SELECTED_PROJ'...${RESET}"
+                
+                echo -e "${CYAN}[*] Cloning healthy files to Secret Vault...${RESET}"
+                sudo rm -rf "$BACKUP_DIR"
+                sudo cp -r "$PROJECT_DIR" "$BACKUP_DIR"
+                
+                echo -e "${CYAN}[*] Generating MD5 Hashes for Security...${RESET}"
+                sudo find "$PROJECT_DIR" -type f -name "*.php" -exec md5sum {} + | sudo tee "$FOOTPRINT_FILE" > /dev/null
+                
+                echo -e "${CYAN}[*] Exporting Database Structure...${RESET}"
+                # Dump structure without DEFINER to make comparison easier
+                sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-data --skip-comments --skip-dump-date "$DB_NAME" | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "$BACKUP_DIR/db_structure.sql" 2>/dev/null
+                
+                CURRENT_DATE=$(date +"%d %B %Y, %I:%M:%S %p")
+                echo "Project Name: $SELECTED_PROJ" > "$INFO_FILE"
+                echo "Last Footprint Taken: $CURRENT_DATE" >> "$INFO_FILE"
+                echo "Backup Path: $BACKUP_DIR" >> "$INFO_FILE"
+                
+                echo -e "${GREEN}[+] FOOTPRINT SAVED SUCCESSFULLY!${RESET}"
+            fi
             read -p "Press Enter to return..."
             ;;
 
         2)
-            echo -e "\n${YELLOW}[*] SCANNING SERVER FOR CORRUPT FILES OR HACKS...${RESET}"
-            if [ ! -f "$FOOTPRINT_FILE" ]; then
-                echo -e "${RED}[-] No footprint found! Please run Option 1 first.${RESET}"
-            else
-                echo -e "${CYAN}[*] Verifying MD5 Checksums...${RESET}"
-                
-                # Check quiet output to see if there's any error
-                if md5sum -c "$FOOTPRINT_FILE" --quiet > /tmp/corrupted_files.txt 2>&1; then
-                    echo -e "${GREEN}[+] SUCCESS: All files are intact! No hacks or corruption detected.${RESET}"
+            if select_project; then
+                echo -e "\n${YELLOW}[*] SCANNING '$SELECTED_PROJ' FOR CORRUPTION OR HACKS...${RESET}"
+                if [ ! -f "$FOOTPRINT_FILE" ]; then
+                    echo -e "${RED}[-] No footprint found for this project! Run Option 1 first.${RESET}"
                 else
-                    echo -e "${RED}[!] WARNING: CHANGES DETECTED!${RESET}"
-                    echo -e "${YELLOW}The following files have been modified or corrupted:${RESET}"
-                    cat /tmp/corrupted_files.txt | grep "FAILED" | awk -F':' '{print " 👉 " $1}'
-                    echo -e "\n${CYAN}💡 TIP: If you did not make these changes, use Option 3 to Auto-Restore!${RESET}"
+                    echo -e "\n${CYAN}[*] Verifying File MD5 Checksums...${RESET}"
+                    
+                    if md5sum -c "$FOOTPRINT_FILE" --quiet > /tmp/corrupted_files.txt 2>&1; then
+                        echo -e "${GREEN}[+] SUCCESS: All files are intact! No hacks or corruption detected.${RESET}"
+                    else
+                        echo -e "${RED}[!] WARNING: CHANGES DETECTED IN FILES!${RESET}"
+                        cat /tmp/corrupted_files.txt | grep "FAILED" | awk -F':' '{print " 👉 " $1}'
+                    fi
+                    
+                    # --- DATABASE INTEGRITY CHECK ---
+                    if [ -f "$BACKUP_DIR/db_structure.sql" ]; then
+                        echo -e "\n${CYAN}[*] Verifying Database Structure...${RESET}"
+                        
+                        # Get current live structure
+                        sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-data --skip-comments --skip-dump-date "$DB_NAME" | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "/tmp/live_db_structure.sql" 2>/dev/null
+                        
+                        # Compare Baseline with Live
+                        DB_DIFF=$(diff -q "$BACKUP_DIR/db_structure.sql" "/tmp/live_db_structure.sql")
+                        
+                        if [ -z "$DB_DIFF" ]; then
+                             echo -e "${GREEN}[+] SUCCESS: Database structure is intact! No unexpected tables/columns.${RESET}"
+                        else
+                             echo -e "${RED}[!] WARNING: DATABASE STRUCTURE HAS CHANGED!${RESET}"
+                             echo -e "${YELLOW}Someone/Something added or removed tables/columns.${RESET}"
+                             
+                             # Suggest viewing the diff
+                             read -p "Do you want to see what changed in the DB? (y/n): " SHOW_DB_DIFF
+                             if [[ "$SHOW_DB_DIFF" == "y" || "$SHOW_DB_DIFF" == "Y" ]]; then
+                                 echo -e "\n${CYAN}--- DATABASE DIFFERENCES ---${RESET}"
+                                 # Use diff to show lines that changed.
+                                 # Lines starting with '<' were in the original (deleted now)
+                                 # Lines starting with '>' are new in the live DB (added now)
+                                 diff "$BACKUP_DIR/db_structure.sql" "/tmp/live_db_structure.sql" | grep -E "^> CREATE TABLE|^< CREATE TABLE|^>   \`|^<   \`"
+                                 echo -e "${CYAN}----------------------------${RESET}"
+                                 echo -e "${YELLOW}Legend: '>' means added newly. '<' means it was removed.${RESET}"
+                             fi
+                        fi
+                        sudo rm -f "/tmp/live_db_structure.sql"
+                    else
+                        echo -e "${YELLOW}[!] Skipping DB check. No db_structure.sql found in vault.${RESET}"
+                    fi
+                    
                 fi
             fi
             read -p "Press Enter to return..."
             ;;
 
         3)
-            echo -e "\n${RED}=====================================================${RESET}"
-            echo -e "${MAGENTA} 🚑 AUTO-RESTORE INITIATED (ROLLBACK TO SAFE STATE)${RESET}"
-            echo -e "${RED}=====================================================${RESET}"
-            if [ ! -d "$BACKUP_DIR" ]; then
-                echo -e "${RED}[-] No backup vault found! Cannot restore.${RESET}"
-                read -p "Press Enter to return..."
-                continue
+            if select_project; then
+                echo -e "\n${RED}=====================================================${RESET}"
+                echo -e "${MAGENTA} 🚑 AUTO-RESTORE INITIATED FOR '$SELECTED_PROJ'${RESET}"
+                echo -e "${RED}=====================================================${RESET}"
+                
+                if [ ! -d "$BACKUP_DIR" ]; then
+                    echo -e "${RED}[-] No backup vault found! Cannot restore.${RESET}"
+                else
+                    read -p "Are you sure you want to OVERWRITE current files with Safe Backup? (YES/no): " CONFIRM
+                    if [ "$CONFIRM" == "YES" ]; then
+                        echo -e "${YELLOW}[*] Restoring files from Secret Vault...${RESET}"
+                        
+                        sudo cp -a "$BACKUP_DIR/." "$PROJECT_DIR/"
+                        
+                        sudo chown -R $USER:www-data "$PROJECT_DIR"
+                        sudo chmod -R 775 "$PROJECT_DIR"
+                        
+                        echo -e "${CYAN}[*] Files restored.${RESET}"
+                        echo -e "${YELLOW}[!] Note: Database changes (if any) must be fixed manually via phpMyAdmin to avoid data loss.${RESET}"
+                        
+                        echo -e "${GREEN}[+] '$SELECTED_PROJ' RESTORED SUCCESSFULLY! Your site is healthy again.${RESET}"
+                    else
+                        echo -e "${YELLOW}[*] Restore Cancelled.${RESET}"
+                    fi
+                fi
             fi
-            
-            read -p "Are you sure you want to OVERWRITE current files with Safe Backup? (YES/no): " CONFIRM
-            if [ "$CONFIRM" == "YES" ]; then
-                echo -e "${YELLOW}[*] Restoring files from Secret Vault...${RESET}"
+            read -p "Press Enter to return..."
+            ;;
+
+        4)
+            if select_project; then
+                echo -e "\n${MAGENTA}=====================================================${RESET}"
+                echo -e "${CYAN} ℹ️ FOOTPRINT & BACKUP INFO: $SELECTED_PROJ${RESET}"
+                echo -e "${MAGENTA}=====================================================${RESET}"
                 
-                # ফাইলগুলো কপি করে রিপ্লেস করা
-                sudo cp -a "$BACKUP_DIR/." "$PROJECT_DIR/"
-                
-                # পারমিশন ঠিক করা
-                sudo chown -R $USER:www-data "$PROJECT_DIR"
-                sudo chmod -R 775 "$PROJECT_DIR"
-                
-                echo -e "${CYAN}[*] Database structure checked... (Data kept safe)${RESET}"
-                
-                echo -e "${GREEN}[+] SERVER RESTORED SUCCESSFULLY! Your site is healthy again.${RESET}"
-            else
-                echo -e "${YELLOW}[*] Restore Cancelled.${RESET}"
+                if [ -f "$INFO_FILE" ]; then
+                    cat "$INFO_FILE" | while read line; do
+                        echo -e "${YELLOW}👉 $line${RESET}"
+                    done
+                    
+                    VAULT_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
+                    if [ -n "$VAULT_SIZE" ]; then
+                        echo -e "${YELLOW}👉 Vault Size: ${GREEN}$VAULT_SIZE${RESET}"
+                    fi
+                else
+                    echo -e "${RED}[-] No footprint data found for '$SELECTED_PROJ'.${RESET}"
+                fi
             fi
             read -p "Press Enter to return..."
             ;;
 
         0)
             clear
-            echo -e "${GREEN}Exiting Self-Healing Tool. Stay secure, Prodip Bandhu!${RESET}"
+            echo -e "${GREEN}Exiting VPS Monitor. Stay secure, Prodip Bandhu!${RESET}"
             exit 0
             ;;
 
