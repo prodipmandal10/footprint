@@ -93,11 +93,12 @@ while true; do
     echo -e "${YELLOW}2) 🕵️‍♂️ SCAN FOR CHANGES (Check Errors/Hacks)${RESET}"
     echo -e "${RED}3) 🚑 AUTO-RESTORE (1-Click Rollback)${RESET}"
     echo -e "${MAGENTA}4) ℹ️ VIEW FOOTPRINT INFO (Date, Time & Status)${RESET}"
+    echo -e "${GREEN}5) 🌐 AUTO HIDE .PHP (Nginx Extensionless Magic)${RESET}"
     echo -e "${BLUE}-----------------------------------------------------${RESET}"
     echo -e "${RED}0) ❌ EXIT${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
 
-    read -p "Select an option [0-4]: " raw_choice
+    read -p "Select an option [0-5]: " raw_choice
     choice=$(echo "$raw_choice" | tr -cd '0-9')
     if [ -z "$choice" ]; then choice="99"; fi
 
@@ -114,7 +115,6 @@ while true; do
                 sudo find "$PROJECT_DIR" -type f -name "*.php" -exec md5sum {} + | sudo tee "$FOOTPRINT_FILE" > /dev/null
                 
                 echo -e "${CYAN}[*] Exporting Database Structure (Bypassing Process Privileges)...${RESET}"
-                # 💥 FIX: Added --no-tablespaces and redirected stderr to /dev/null to hide warnings
                 sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-tablespaces --no-data --skip-comments --skip-dump-date "$DB_NAME" 2>/dev/null | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "$BACKUP_DIR/db_structure.sql"
                 
                 CURRENT_DATE=$(TZ="Asia/Kolkata" date +"%d %B %Y, %I:%M:%S %p")
@@ -142,14 +142,10 @@ while true; do
                         cat /tmp/corrupted_files.txt | grep "FAILED" | awk -F':' '{print " 👉 " $1}'
                     fi
                     
-                    # --- DATABASE INTEGRITY CHECK ---
                     if [ -f "$BACKUP_DIR/db_structure.sql" ]; then
                         echo -e "\n${CYAN}[*] Verifying Database Structure...${RESET}"
-                        
-                        # 💥 FIX: Added --no-tablespaces here too
                         sudo mysqldump -u "$DB_USER" -p"$DB_PASS" --no-tablespaces --no-data --skip-comments --skip-dump-date "$DB_NAME" 2>/dev/null | sed 's/ AUTO_INCREMENT=[0-9]*//g' > "/tmp/live_db_structure.sql"
                         
-                        # Compare Baseline with Live
                         DB_DIFF=$(diff -q "$BACKUP_DIR/db_structure.sql" "/tmp/live_db_structure.sql")
                         
                         if [ -z "$DB_DIFF" ]; then
@@ -157,7 +153,6 @@ while true; do
                         else
                              echo -e "${RED}[!] WARNING: DATABASE STRUCTURE HAS CHANGED!${RESET}"
                              echo -e "${YELLOW}Someone/Something added or removed tables/columns.${RESET}"
-                             
                              read -p "Do you want to see what changed in the DB? (y/n): " SHOW_DB_DIFF
                              if [[ "$SHOW_DB_DIFF" == "y" || "$SHOW_DB_DIFF" == "Y" ]]; then
                                  echo -e "\n${CYAN}--- DATABASE DIFFERENCES ---${RESET}"
@@ -170,7 +165,6 @@ while true; do
                     else
                         echo -e "${YELLOW}[!] Skipping DB check. No db_structure.sql found in vault.${RESET}"
                     fi
-                    
                 fi
             fi
             read -p "Press Enter to return..."
@@ -188,15 +182,11 @@ while true; do
                     read -p "Are you sure you want to OVERWRITE current files with Safe Backup? (YES/no): " CONFIRM
                     if [ "$CONFIRM" == "YES" ]; then
                         echo -e "${YELLOW}[*] Restoring files from Secret Vault...${RESET}"
-                        
                         sudo cp -a "$BACKUP_DIR/." "$PROJECT_DIR/"
-                        
                         sudo chown -R $USER:www-data "$PROJECT_DIR"
                         sudo chmod -R 775 "$PROJECT_DIR"
-                        
                         echo -e "${CYAN}[*] Files restored.${RESET}"
                         echo -e "${YELLOW}[!] Note: Database changes (if any) must be fixed manually via phpMyAdmin to avoid data loss.${RESET}"
-                        
                         echo -e "${GREEN}[+] '$SELECTED_PROJ' RESTORED SUCCESSFULLY! Your site is healthy again.${RESET}"
                     else
                         echo -e "${YELLOW}[*] Restore Cancelled.${RESET}"
@@ -216,13 +206,58 @@ while true; do
                     cat "$INFO_FILE" | while read line; do
                         echo -e "${YELLOW}👉 $line${RESET}"
                     done
-                    
                     VAULT_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
                     if [ -n "$VAULT_SIZE" ]; then
                         echo -e "${YELLOW}👉 Vault Size: ${GREEN}$VAULT_SIZE${RESET}"
                     fi
                 else
                     echo -e "${RED}[-] No footprint data found for '$SELECTED_PROJ'.${RESET}"
+                fi
+            fi
+            read -p "Press Enter to return..."
+            ;;
+
+        # 💥 NEW FEATURE: AUTO HIDE .PHP MAGIC
+        5)
+            if select_project; then
+                echo -e "\n${YELLOW}[*] HUNTING FOR NGINX CONFIG OF '$SELECTED_PROJ'...${RESET}"
+                
+                # Nginx Config ফাইলটি অটো খুঁজে বের করবে (যে ফাইলে প্রজেক্টের পাথ আছে)
+                NGINX_CONF=$(sudo grep -rl "root /var/www/html/$SELECTED_PROJ" /etc/nginx/sites-available/ | head -n 1)
+                
+                if [ -z "$NGINX_CONF" ]; then
+                    echo -e "${RED}[-] Could not auto-detect Nginx config file for this project.${RESET}"
+                    echo -e "${YELLOW}Make sure you linked this project to a Domain via Nginx!${RESET}"
+                else
+                    echo -e "${CYAN}[+] Found Nginx Config File: ${GREEN}$NGINX_CONF${RESET}"
+                    
+                    # আগে থেকেই ম্যাজিক করা আছে কিনা চেক করবে
+                    if sudo grep -q "@php" "$NGINX_CONF"; then
+                        echo -e "${GREEN}[+] Awesome! This project is ALREADY configured to hide .php! 🚀${RESET}"
+                    else
+                        echo -e "${YELLOW}[*] Injecting Nginx Magic Extensionless Code...${RESET}"
+                        
+                        # সেফটির জন্য ফাইলের একটা ব্যাকআপ রাখবে
+                        sudo cp "$NGINX_CONF" "${NGINX_CONF}.auto_backup"
+                        
+                        # try_files লাইনটাকে মডিফাই করবে
+                        sudo sed -i 's/try_files \$uri \$uri\/ .*/try_files \$uri \$uri\/ \@php;/g' "$NGINX_CONF"
+                        
+                        # @php ম্যাজিক ব্লকটি ইনসার্ট করবে (PHP ব্লকের ঠিক আগে)
+                        sudo awk '/location ~ \\.php/{print "    location @php {\n        rewrite ^/(.*)$ /$1.php last;\n    }\n"}1' "$NGINX_CONF" > /tmp/nginx_magic.tmp && sudo mv /tmp/nginx_magic.tmp "$NGINX_CONF"
+                        
+                        # Nginx টেস্ট করে রিস্টার্ট দেবে
+                        echo -e "${CYAN}[*] Testing Nginx Configuration...${RESET}"
+                        if sudo nginx -t >/dev/null 2>&1; then
+                            sudo systemctl restart nginx
+                            echo -e "${GREEN}[+] BOOM! 💥 .php is now permanently hidden for $SELECTED_PROJ!${RESET}"
+                            echo -e "${CYAN}💡 You can now safely remove .php from your HTML links.${RESET}"
+                        else
+                            echo -e "${RED}[-] Error detected in Nginx Config. Reverting changes to keep server safe...${RESET}"
+                            sudo mv "${NGINX_CONF}.auto_backup" "$NGINX_CONF"
+                            sudo systemctl restart nginx
+                        fi
+                    fi
                 fi
             fi
             read -p "Press Enter to return..."
